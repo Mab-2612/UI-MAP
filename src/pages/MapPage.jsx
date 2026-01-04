@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import Map from '../components/Map';
 import Sidebar from '../components/Sidebar';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, User as UserIcon, Menu } from 'lucide-react';
+import { LogOut, User as UserIcon, Menu, LogIn } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 function MapPage() {
-  const { user, logout } = useAuth();
+  const { user, logout } = useAuth(); // user is null if guest
   const navigate = useNavigate();
 
   // --- UI STATES ---
@@ -21,11 +21,11 @@ function MapPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // --- NEW: USER PREFERENCES STATE ---
+  // --- USER DATA ---
   const [savedLocations, setSavedLocations] = useState([]);
   const [recentLocations, setRecentLocations] = useState([]);
 
-  // 1. Fetch Locations
+  // 1. Fetch Locations (Public)
   useEffect(() => {
     const fetchLocations = async () => {
       try {
@@ -50,34 +50,49 @@ function MapPage() {
 
   const filteredLocations = locations.filter(loc => {
     const query = searchTerm.toLowerCase();
-    const matchesSearch = 
-        loc.name.toLowerCase().includes(query) ||
-        loc.category.toLowerCase().includes(query);
-    const matchesCategory = selectedCategory === 'All' || loc.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    return (
+        (loc.name.toLowerCase().includes(query) || loc.category.toLowerCase().includes(query)) &&
+        (selectedCategory === 'All' || loc.category === selectedCategory)
+    );
   });
 
-  // --- NEW: HANDLE SAVE / RECENT LOGIC ---
-  
-  // Called when user clicks "Bookmark" inside the Map Popup
+  // --- AUTH GUARDED ACTIONS ---
+
+  const checkAuth = () => {
+    if (!user) {
+        toast.error("Please log in to use this feature", { icon: '🔒' });
+        navigate('/login');
+        return false;
+    }
+    return true;
+  };
+
   const handleToggleSave = (location) => {
+    if (!checkAuth()) return; // BLOCK GUESTS
+
     setSavedLocations(prev => {
         const exists = prev.find(l => l.id === location.id);
-        if (exists) return prev.filter(l => l.id !== location.id); // Remove
-        return [...prev, location]; // Add
+        if (exists) return prev.filter(l => l.id !== location.id);
+        toast.success("Location saved!");
+        return [...prev, location];
     });
   };
 
-  // Called when user clicks a Pin or selects from Sidebar
+  const handleRateLocation = (rating) => {
+    if (!checkAuth()) return; // BLOCK GUESTS
+    toast.success(`Rated ${rating} stars!`);
+    // API call to save rating would go here
+  };
+
   const handleAddToRecent = (location) => {
+    // We allow guests to have a "session-based" recent history (optional)
+    // If you want to block this for guests too, add checkAuth() here.
     setRecentLocations(prev => {
-        // Remove duplicates and keep only the last 5
         const filtered = prev.filter(l => l.id !== location.id);
         return [location, ...filtered].slice(0, 5);
     });
   };
 
-  // Handle Logout
   const confirmLogout = () => {
     logout();
     navigate('/login');
@@ -109,21 +124,21 @@ function MapPage() {
         <div className="absolute inset-0 z-40 bg-black/30 backdrop-blur-sm md:hidden animate-in fade-in" onClick={() => setIsMobileMenuOpen(false)} />
       )}
 
-      {/* --- SIDEBAR (Updated with Saved/Recent Props) --- */}
+      {/* --- SIDEBAR --- */}
       <div className={`absolute top-0 bottom-0 left-0 z-50 w-[85%] max-w-sm bg-white shadow-2xl transition-transform duration-300 ease-in-out border-r border-gray-200 md:relative md:translate-x-0 md:w-80 md:block md:shadow-xl ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <Sidebar 
             locations={filteredLocations} 
             totalCount={locations.length}
-            onLocationSelect={(loc) => { setSelectedLocation(loc); handleAddToRecent(loc); }} // Add to recent when clicked in sidebar
+            onLocationSelect={(loc) => { setSelectedLocation(loc); handleAddToRecent(loc); }}
             onClose={() => setIsMobileMenuOpen(false)}
             searchTerm={searchTerm}
             setSearchTerm={setSearchTerm}
             selectedCategory={selectedCategory}
             setSelectedCategory={setSelectedCategory}
             categories={categories}
-            // --- PASS DATA TO SIDEBAR ---
             savedLocations={savedLocations}
             recentLocations={recentLocations}
+            isAuthenticated={!!user} // Pass auth state to sidebar
         />
       </div>
 
@@ -131,31 +146,42 @@ function MapPage() {
       <div className="flex-1 h-full relative z-10">
         <button onClick={() => setIsMobileMenuOpen(true)} className="md:hidden absolute top-4 left-4 z-[1000] bg-white p-3 rounded-xl shadow-lg text-gray-700 border border-gray-100"><Menu size={24} /></button>
 
-        {/* PROFILE HEADER */}
+        {/* --- DYNAMIC HEADER (Login vs Profile) --- */}
         <div className="absolute top-4 right-4 z-[1000]">
-            <div className="bg-white/95 backdrop-blur-md p-1.5 pl-2 pr-2 rounded-full shadow-xl border border-white/50 flex items-center gap-3 transition-all cursor-pointer hover:shadow-2xl" onClick={() => setIsProfileOpen(!isProfileOpen)}>
-                <div className="flex items-center gap-2 pl-1">
-                    <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-inner ring-2 ring-white">
-                        {user?.username?.charAt(0).toUpperCase() || <UserIcon size={16}/>}
+            {user ? (
+                // LOGGED IN VIEW
+                <div className="bg-white/95 backdrop-blur-md p-1.5 pl-2 pr-2 rounded-full shadow-xl border border-white/50 flex items-center gap-3 transition-all cursor-pointer hover:shadow-2xl" onClick={() => setIsProfileOpen(!isProfileOpen)}>
+                    <div className="flex items-center gap-2 pl-1">
+                        <div className="w-9 h-9 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-inner ring-2 ring-white">
+                            {user.username?.charAt(0).toUpperCase() || <UserIcon size={16}/>}
+                        </div>
+                        <div className="flex flex-col pr-2">
+                            <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider leading-none">Hello,</span>
+                            <span className="text-sm font-bold text-gray-800 leading-none max-w-[100px] truncate">{user.username}</span>
+                        </div>
                     </div>
-                    <div className="flex flex-col pr-2">
-                        <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider leading-none">Hello,</span>
-                        <span className="text-sm font-bold text-gray-800 leading-none max-w-[100px] truncate">{user?.username || 'Student'}</span>
-                    </div>
+                    <div className="w-px h-6 bg-gray-200"></div>
+                    <button onClick={(e) => { e.stopPropagation(); setShowLogoutConfirm(true); }} className="p-2 rounded-full bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-200"><LogOut size={16} /></button>
                 </div>
-                <div className="w-px h-6 bg-gray-200"></div>
-                <button onClick={(e) => { e.stopPropagation(); setShowLogoutConfirm(true); }} className="p-2 rounded-full bg-red-50 text-red-500 hover:bg-red-500 hover:text-white transition-all duration-200"><LogOut size={16} /></button>
-            </div>
+            ) : (
+                // GUEST VIEW
+                <button 
+                    onClick={() => navigate('/login')}
+                    className="flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-full shadow-xl hover:bg-black transition-all active:scale-95 font-bold text-sm"
+                >
+                    <LogIn size={16} /> Log In
+                </button>
+            )}
         </div>
 
-        {/* --- MAP COMPONENT (Updated Props) --- */}
+        {/* --- MAP COMPONENT --- */}
         <Map 
             selectedLocation={selectedLocation} 
             filteredLocations={filteredLocations}
-            // --- NEW PROPS ---
             savedLocations={savedLocations}
             onToggleSave={handleToggleSave}
             onAddToRecent={handleAddToRecent}
+            onRate={handleRateLocation}
         />
       </div>
     </div>
